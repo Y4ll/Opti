@@ -1,0 +1,14 @@
+#!/sbin/sh
+#################
+# Instalador estandar de modulos Magisk
+#################
+umask 022
+OUTFD=$2
+ZIPFILE=$3
+ui_print() { echo "$1"; }
+require_new_magisk() { ui_print "Se necesita Magisk 20.4+"; exit 1; }
+[ -f /data/adb/magisk/util_functions.sh ] || require_new_magisk
+. /data/adb/magisk/util_functions.sh
+[ $MAGISK_VER_CODE -ge 20400 ] || require_new_magisk
+install_module
+exit 0
