@@ -1,22 +1,29 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
-    <!-- Permite pedir a Android que cierre apps en segundo plano -->
+    <!-- Pedir a Android que cierre apps en segundo plano -->
     <uses-permission android:name="android.permission.KILL_BACKGROUND_PROCESSES" />
-    <!-- Necesario para listar las apps instaladas (Android 11+) -->
+    <!-- Listar las apps instaladas (Android 11+) -->
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
-    <!-- Acceso a todos los archivos, para buscar y borrar basura (el usuario lo concede) -->
+    <!-- Acceso a todos los archivos, para buscar y borrar basura (lo concede el usuario) -->
     <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="29" />
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="29" />
+    <!-- Saber cuándo se usó cada app (lo concede el usuario en Ajustes) -->
+    <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS"
+        tools:ignore="ProtectedPermissions" />
+    <!-- Desinstalar apps con confirmación del sistema -->
+    <uses-permission android:name="android.permission.REQUEST_DELETE_PACKAGES" />
+    <!-- No molestar durante el juego (lo concede el usuario en Ajustes) -->
+    <uses-permission android:name="android.permission.ACCESS_NOTIFICATION_POLICY" />
     <!-- Opcional: se concede una sola vez por ADB para cambiar las animaciones -->
     <uses-permission android:name="android.permission.WRITE_SECURE_SETTINGS"
-        tools:ignore="ProtectedPermissions"
-        xmlns:tools="http://schemas.android.com/tools" />
+        tools:ignore="ProtectedPermissions" />
 
     <application
         android:allowBackup="false"
-        android:label="Android Optimizer Lite"
+        android:label="Android Optimizer"
         android:requestLegacyExternalStorage="true"
         android:theme="@android:style/Theme.DeviceDefault.NoActionBar">
 
