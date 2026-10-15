@@ -1052,7 +1052,11 @@ public class MainActivity extends Activity {
                 }
                 final Map<String, String> names = new HashMap<String, String>();
                 for (String p : frozen) names.put(p, labelOf(pm, p));
-                for (String p : candidates) names.put(p, labelOf(pm, p));
+                java.util.Set<String> userSet = new java.util.HashSet<String>(Pro.userPackages());
+                for (String p : candidates) {
+                    String n = labelOf(pm, p);
+                    names.put(p, userSet.contains(p) ? n : n + "  [SISTEMA]");
+                }
                 Collections.sort(candidates, new Comparator<String>() {
                     public int compare(String a, String b) {
                         return names.get(a).compareToIgnoreCase(names.get(b));
@@ -1067,6 +1071,37 @@ public class MainActivity extends Activity {
                 });
             }
         }).start();
+    }
+
+
+    /** Muestra qué se va a congelar antes de hacerlo y recuerda la lista como "mi lista". */
+    private void confirmFreeze(final List<String> sel, final Map<String, String> names) {
+        StringBuilder sb = new StringBuilder();
+        for (String p : sel) sb.append("• ").append(names.get(p)).append('\n');
+        new AlertDialog.Builder(this)
+                .setTitle("CONGELAR " + sel.size() + " APPS")
+                .setMessage(sb + "\nNo se borra nada: se descongelan desde esta pantalla. "
+                        + "Quedarán guardadas como 'mi lista' para congelarlas de nuevo con un toque.")
+                .setPositiveButton("CONGELAR", new android.content.DialogInterface.OnClickListener() {
+                    public void onClick(android.content.DialogInterface d, int w) {
+                        java.util.LinkedHashSet<String> all = new java.util.LinkedHashSet<String>();
+                        for (String p : prefs.getString("freeze_list", "").split(",")) {
+                            if (Pro.safePkg(p)) all.add(p);
+                        }
+                        all.addAll(sel);
+                        prefs.edit().putString("freeze_list", TextUtils.join(",", all)).apply();
+                        runPro("Congelando…", new ProWork() {
+                            public String run() {
+                                for (String p : sel) {
+                                    Pro.sh("am force-stop " + p + "; pm disable-user --user 0 " + p);
+                                }
+                                return sel.size() + " apps congeladas. Para usarlas, descongélalas aquí.";
+                            }
+                        });
+                    }
+                })
+                .setNegativeButton("CANCELAR", null)
+                .show();
     }
 
     private String labelOf(PackageManager pm, String pkg) {
@@ -1121,6 +1156,20 @@ public class MainActivity extends Activity {
             list.addView(all, ui.lp(Ui.MATCH, Ui.WRAP, 10));
         }
 
+        final List<String> mine = new ArrayList<String>();
+        for (String p : prefs.getString("freeze_list", "").split(",")) {
+            if (Pro.safePkg(p) && candidates.contains(p)) mine.add(p);
+        }
+        if (!mine.isEmpty()) {
+            Button grp = ui.button("CONGELAR MI LISTA (" + mine.size() + ")", true, 52);
+            grp.setOnClickListener(new View.OnClickListener() {
+                public void onClick(View v) {
+                    confirmFreeze(mine, names);
+                }
+            });
+            list.addView(grp, ui.lp(Ui.MATCH, Ui.WRAP, 12));
+        }
+
         list.addView(ui.label("// ELIGE LAS QUE QUIERES CONGELAR"), ui.lp(Ui.MATCH, Ui.WRAP, 16));
         final List<CheckBox> boxes = new ArrayList<CheckBox>();
         final List<String> pkgs = new ArrayList<String>();
@@ -1148,14 +1197,7 @@ public class MainActivity extends Activity {
                     toast("No elegiste ninguna app");
                     return;
                 }
-                runPro("Congelando…", new ProWork() {
-                    public String run() {
-                        for (String p : sel) {
-                            Pro.sh("am force-stop " + p + "; pm disable-user --user 0 " + p);
-                        }
-                        return sel.size() + " apps congeladas. Para usarlas, descongélalas aquí.";
-                    }
-                });
+                confirmFreeze(sel, names);
             }
         });
         root.addView(go, ui.lp(Ui.MATCH, Ui.WRAP, 8));
