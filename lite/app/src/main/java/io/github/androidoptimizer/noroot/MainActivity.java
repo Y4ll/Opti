@@ -75,6 +75,7 @@ public class MainActivity extends Activity {
         super.onResume();
         restoreDnd();
         if (screen.equals("home") && !busy && ui != null) showHome();
+        if (screen.equals("pro") && !busy && ui != null) openPro();
     }
 
     @Override
@@ -95,6 +96,7 @@ public class MainActivity extends Activity {
 
     private void showHome() {
         screen = "home";
+        Pro.unlisten();
         ScrollView sv = new ScrollView(this);
         sv.setBackgroundColor(Ui.BG);
         LinearLayout col = new LinearLayout(this);
@@ -190,6 +192,13 @@ public class MainActivity extends Activity {
                     public void run() { openQuick(); }
                 })), ui.lp(Ui.MATCH, Ui.WRAP, 10));
 
+        col.addView(ui.tapCard("MODO PRO  ·  SHIZUKU", Pro.ready()
+                        ? "Conectado: caché real, cerrar apps, restricciones, rendimiento de juegos"
+                        : "Sin PC ni root: caché real, force-stop y más. Toca para activarlo",
+                new Runnable() {
+                    public void run() { openPro(); }
+                }), ui.lp(Ui.MATCH, Ui.WRAP, 10));
+
         col.addView(ui.hazard(), ui.lp(Ui.MATCH, ui.dp(14), 26));
         setContentView(sv);
     }
@@ -264,7 +273,16 @@ public class MainActivity extends Activity {
                 setProgress(log + "▶ [2/3] Limpiando caché de esta app…");
 
                 Booster.cleanOwnCache(MainActivity.this);
-                log.append("✔ [2/3] Caché de esta app limpia\n");
+                if (Pro.ready()) {
+                    long free0 = Booster.freeStorage();
+                    Pro.sh("pm trim-caches 999G");
+                    sleep(800);
+                    long gained = Booster.freeStorage() - free0;
+                    log.append("✔ [2/3] Caché de TODAS las apps limpia (Pro)  ·  ")
+                            .append(gained > 0 ? "+" + fmt(gained) : "ya estaba limpia").append('\n');
+                } else {
+                    log.append("✔ [2/3] Caché de esta app limpia  (activa Modo Pro para limpiar todas)\n");
+                }
 
                 List<Booster.Item> junk = null;
                 if (hasStorageAccess()) {
@@ -759,6 +777,10 @@ public class MainActivity extends Activity {
         new Thread(new Runnable() {
             public void run() {
                 Booster.killBackground(MainActivity.this);
+                if (prefs.getBoolean("game_perf", false) && Pro.ready() && Pro.safePkg(pkg)) {
+                    if (Build.VERSION.SDK_INT >= 31) Pro.sh("cmd game mode performance " + pkg);
+                    Pro.sh("am set-standby-bucket " + pkg + " active");
+                }
                 runOnUiThread(new Runnable() {
                     public void run() {
                         try {
@@ -783,6 +805,232 @@ public class MainActivity extends Activity {
             toast("No molestar restaurado");
         }
         prefs.edit().remove("dnd_prev").apply();
+    }
+
+
+    // =====================================================================
+    // Modo Pro (Shizuku)
+    // =====================================================================
+
+    private interface ProWork {
+        String run();
+    }
+
+    private void openPro() {
+        screen = "pro";
+        Pro.listen(new Runnable() {
+            public void run() {
+                runOnUiThread(new Runnable() {
+                    public void run() {
+                        if (screen.equals("pro") && !busy) openPro();
+                    }
+                });
+            }
+        });
+        LinearLayout root = shell("MODO PRO");
+        ScrollView sv = new ScrollView(this);
+        LinearLayout list = new LinearLayout(this);
+        list.setOrientation(LinearLayout.VERTICAL);
+        list.setPadding(0, 0, 0, ui.dp(8));
+        sv.addView(list);
+        root.addView(sv, new LinearLayout.LayoutParams(Ui.MATCH, 0, 1f));
+
+        final boolean ready = Pro.ready();
+        LinearLayout st = ui.card();
+        st.addView(ui.label(ready ? "// SHIZUKU: CONECTADO" : "// SHIZUKU: NO CONECTADO"));
+        st.addView(ui.body(ready
+                ? "Esta app puede ejecutar comandos con permisos de ADB, sin PC y sin root."
+                : "Shizuku es una app gratuita que da permisos de ADB a otras apps, sin root.\n\n"
+                + "1. Instala Shizuku.\n"
+                + "2. Actívalo: en Android 11 o más, con Depuración inalámbrica (Opciones de desarrollador).\n"
+                + "3. Vuelve aquí y concede el permiso.", 13, Ui.MUTED));
+        list.addView(st, ui.lp(Ui.MATCH, Ui.WRAP, 10));
+
+        if (!ready) {
+            if (!Pro.installed(this)) {
+                proButton(list, "DESCARGAR SHIZUKU", new Runnable() {
+                    public void run() {
+                        try {
+                            startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse("https://shizuku.rikka.app/download/")));
+                        } catch (Exception e) {
+                            toast("Busca 'Shizuku' en Google Play o en shizuku.rikka.app");
+                        }
+                    }
+                });
+            } else if (!Pro.running()) {
+                proButton(list, "ABRIR SHIZUKU Y ACTIVARLO", new Runnable() {
+                    public void run() {
+                        Intent i = getPackageManager().getLaunchIntentForPackage(Pro.SHIZUKU_PKG);
+                        if (i != null) startActivity(i);
+                    }
+                });
+            } else {
+                proButton(list, "DAR PERMISO A ESTA APP", new Runnable() {
+                    public void run() { Pro.requestPermission(); }
+                });
+            }
+            setContentView(root);
+            return;
+        }
+
+        list.addView(ui.label("// LIMPIEZA REAL"), ui.lp(Ui.MATCH, Ui.WRAP, 16));
+        proButton(list, "LIMPIAR CACHÉ DE TODAS LAS APPS", new Runnable() {
+            public void run() {
+                runPro("Limpiando caché…", new ProWork() {
+                    public String run() {
+                        long before = Booster.freeStorage();
+                        String out = Pro.sh("pm trim-caches 999G");
+                        sleep(800);
+                        long gained = Booster.freeStorage() - before;
+                        return (gained > 0 ? "Espacio liberado: " + fmt(gained)
+                                : "No había caché que liberar") + (out.isEmpty() ? "" : "\n\n" + out);
+                    }
+                });
+            }
+        });
+        proButton(list, "CERRAR TODAS LAS APPS (FORCE-STOP)", new Runnable() {
+            public void run() {
+                new AlertDialog.Builder(MainActivity.this)
+                        .setTitle("CERRAR TODAS LAS APPS")
+                        .setMessage("Se detienen por completo todas las apps que instalaste, salvo esta, el teclado y el launcher. "
+                                + "Mientras no las abras, no sonarán sus alarmas ni recibirán avisos. ¿Seguir?")
+                        .setPositiveButton("CERRAR", new android.content.DialogInterface.OnClickListener() {
+                            public void onClick(android.content.DialogInterface d, int w) {
+                                runPro("Cerrando apps…", new ProWork() {
+                                    public String run() {
+                                        List<String> skip = Pro.protectedPackages(MainActivity.this);
+                                        int n = 0;
+                                        for (String p : Pro.userPackages()) {
+                                            if (skip.contains(p) || !Pro.safePkg(p)) continue;
+                                            Pro.sh("am force-stop " + p);
+                                            n++;
+                                        }
+                                        return n + " apps detenidas.";
+                                    }
+                                });
+                            }
+                        })
+                        .setNegativeButton("CANCELAR", null)
+                        .show();
+            }
+        });
+
+        list.addView(ui.label("// VELOCIDAD"), ui.lp(Ui.MATCH, Ui.WRAP, 16));
+        proButton(list, "COMPILAR APPS PARA ABRIR MÁS RÁPIDO", new Runnable() {
+            public void run() {
+                runPro("Iniciando…", new ProWork() {
+                    public String run() {
+                        Pro.sh("nohup cmd package compile -m speed-profile -a >/dev/null 2>&1 &");
+                        return "Compilando en segundo plano. Puede tardar varios minutos y se nota más tras usar las apps unos días.";
+                    }
+                });
+            }
+        });
+        proButton(list, "ANIMACIONES RÁPIDAS (0.5x / 1x)", new Runnable() {
+            public void run() {
+                runPro("Cambiando…", new ProWork() {
+                    public String run() {
+                        float cur = Settings.Global.getFloat(getContentResolver(), Settings.Global.ANIMATOR_DURATION_SCALE, 1f);
+                        String t = cur > 0.6f ? "0.5" : "1";
+                        Pro.sh("settings put global window_animation_scale " + t
+                                + "; settings put global transition_animation_scale " + t
+                                + "; settings put global animator_duration_scale " + t);
+                        return "Animaciones a " + t + "x";
+                    }
+                });
+            }
+        });
+        final boolean perf = prefs.getBoolean("game_perf", false);
+        proButton(list, "RENDIMIENTO AL ABRIR JUEGOS: " + (perf ? "ACTIVADO" : "APAGADO"), new Runnable() {
+            public void run() {
+                prefs.edit().putBoolean("game_perf", !prefs.getBoolean("game_perf", false)).apply();
+                openPro();
+                toast("Al abrir un juego desde Modo Juego se pone en modo rendimiento (Android 12+) y prioridad activa.");
+            }
+        });
+
+        list.addView(ui.label("// BATERÍA"), ui.lp(Ui.MATCH, Ui.WRAP, 16));
+        proButton(list, "RESTRINGIR APPS SIN USAR (30+ DÍAS)", new Runnable() {
+            public void run() {
+                if (!Booster.hasUsageAccess(MainActivity.this)) {
+                    toast("Primero da acceso de uso en Apps sin usar");
+                    openApps();
+                    return;
+                }
+                runPro("Restringiendo…", new ProWork() {
+                    public String run() {
+                        List<String> skip = Pro.protectedPackages(MainActivity.this);
+                        long limit = System.currentTimeMillis() - 30L * 24 * 3600 * 1000;
+                        StringBuilder saved = new StringBuilder();
+                        int n = 0;
+                        for (Booster.AppRow a : Booster.listApps(MainActivity.this)) {
+                            if (a.lastUsed <= 0 || a.lastUsed > limit) continue;
+                            if (skip.contains(a.pkg) || !Pro.safePkg(a.pkg)) continue;
+                            Pro.sh("cmd appops set " + a.pkg + " RUN_ANY_IN_BACKGROUND ignore; "
+                                    + "am set-standby-bucket " + a.pkg + " restricted");
+                            if (saved.length() > 0) saved.append(',');
+                            saved.append(a.pkg);
+                            n++;
+                        }
+                        String old = prefs.getString("restricted", "");
+                        String all = old.isEmpty() ? saved.toString()
+                                : (saved.length() == 0 ? old : old + "," + saved);
+                        prefs.edit().putString("restricted", all).apply();
+                        return n + " apps ya no pueden trabajar en segundo plano. Se pueden restaurar con el botón de abajo.";
+                    }
+                });
+            }
+        });
+        proButton(list, "RESTAURAR APPS RESTRINGIDAS", new Runnable() {
+            public void run() {
+                runPro("Restaurando…", new ProWork() {
+                    public String run() {
+                        String all = prefs.getString("restricted", "");
+                        int n = 0;
+                        for (String p : all.split(",")) {
+                            if (!Pro.safePkg(p)) continue;
+                            Pro.sh("cmd appops set " + p + " RUN_ANY_IN_BACKGROUND default; "
+                                    + "am set-standby-bucket " + p + " active");
+                            n++;
+                        }
+                        prefs.edit().remove("restricted").apply();
+                        return n + " apps restauradas.";
+                    }
+                });
+            }
+        });
+        setContentView(root);
+    }
+
+    private void proButton(LinearLayout list, String label, final Runnable r) {
+        quickButton(list, label, r);
+    }
+
+    private void runPro(String message, final ProWork w) {
+        if (busy) return;
+        busy = true;
+        final AlertDialog d = new AlertDialog.Builder(this)
+                .setTitle(message)
+                .setMessage("Un momento…")
+                .setCancelable(false)
+                .create();
+        d.show();
+        new Thread(new Runnable() {
+            public void run() {
+                final String res = w.run();
+                runOnUiThread(new Runnable() {
+                    public void run() {
+                        busy = false;
+                        d.dismiss();
+                        new AlertDialog.Builder(MainActivity.this)
+                                .setTitle("LISTO")
+                                .setMessage(res)
+                                .setPositiveButton("OK", null)
+                                .show();
+                    }
+                });
+            }
+        }).start();
     }
 
     // =====================================================================
@@ -860,6 +1108,18 @@ public class MainActivity extends Activity {
             Settings.Global.putFloat(r, Settings.Global.ANIMATOR_DURATION_SCALE, target);
             toast("Animaciones a " + target + "x" + (target < 1f ? " (más rápidas)" : " (normales)"));
         } catch (SecurityException e) {
+            if (Pro.ready()) {
+                Pro.sh("pm grant " + getPackageName() + " android.permission.WRITE_SECURE_SETTINGS");
+                try {
+                    Settings.Global.putFloat(r, Settings.Global.WINDOW_ANIMATION_SCALE, target);
+                    Settings.Global.putFloat(r, Settings.Global.TRANSITION_ANIMATION_SCALE, target);
+                    Settings.Global.putFloat(r, Settings.Global.ANIMATOR_DURATION_SCALE, target);
+                    toast("Animaciones a " + target + "x (permiso concedido con Shizuku)");
+                    return;
+                } catch (SecurityException e2) {
+                    // sigue al diálogo de ADB
+                }
+            }
             showAdbDialog();
         }
     }
