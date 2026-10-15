@@ -96,6 +96,10 @@ final class Pro {
 
     /** Ejecuta un comando de shell con permisos de shell. Devuelve la salida (stdout + stderr). */
     static String sh(String cmd) {
+        return sh(cmd, 4000);
+    }
+
+    static String sh(String cmd, int limit) {
         try {
             Method m = Shizuku.class.getDeclaredMethod("newProcess",
                     String[].class, String[].class, String.class);
@@ -106,7 +110,7 @@ final class Pro {
             StringBuilder sb = new StringBuilder();
             String line;
             while ((line = r.readLine()) != null) {
-                if (sb.length() < 4000) sb.append(line).append('\n');
+                if (sb.length() < limit) sb.append(line).append('\n');
             }
             p.waitFor();
             return sb.toString().trim();
@@ -118,7 +122,7 @@ final class Pro {
     /** Paquetes de terceros instalados (los que se pueden tocar con seguridad). */
     static List<String> userPackages() {
         List<String> out = new ArrayList<String>();
-        for (String line : sh("pm list packages -3").split("\n")) {
+        for (String line : sh("pm list packages -3", 200000).split("\n")) {
             line = line.trim();
             if (line.startsWith("package:")) out.add(line.substring(8));
         }
@@ -142,5 +146,42 @@ final class Pro {
     /** Evita inyectar texto raro en el shell: un nombre de paquete solo tiene letras, números, punto y guion bajo. */
     static boolean safePkg(String s) {
         return s != null && s.matches("[A-Za-z0-9._]+");
+    }
+
+    private static final String[] CRITICAL = {
+            "systemui", "settings", "packageinstaller", "permissioncontroller", "telephony", "phone",
+            "dialer", "contacts", "mms", "messag", "launcher", "inputmethod", "keyboard", "gms", "gsf",
+            "vending", "webview", "bluetooth", "nfc", "providers", "shell", "android.server",
+            "networkstack", "camera", "wallpaper", "emergency", "cellbroadcast", "ims", "carrier",
+            "overlay", "framework", "sim", "nearby", "cts", "clock", "deskclock", "calendar"};
+
+    /** Apps del sistema que no se deben congelar nunca. */
+    static boolean critical(String pkg) {
+        String p = pkg.toLowerCase();
+        if (p.equals("android")) return true;
+        for (String c : CRITICAL) {
+            if (p.contains(c)) return true;
+        }
+        return false;
+    }
+
+    /** Paquetes inhabilitados (congelados) en este momento. */
+    static List<String> disabledPackages() {
+        List<String> out = new ArrayList<String>();
+        for (String line : sh("pm list packages -d", 20000).split("\n")) {
+            line = line.trim();
+            if (line.startsWith("package:")) out.add(line.substring(8));
+        }
+        return out;
+    }
+
+    /** Todos los paquetes instalados. */
+    static java.util.Set<String> installedPackages() {
+        java.util.Set<String> out = new java.util.HashSet<String>();
+        for (String line : sh("pm list packages", 200000).split("\n")) {
+            line = line.trim();
+            if (line.startsWith("package:")) out.add(line.substring(8));
+        }
+        return out;
     }
 }

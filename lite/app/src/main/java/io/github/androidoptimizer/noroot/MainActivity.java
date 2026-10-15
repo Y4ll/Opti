@@ -778,6 +778,10 @@ public class MainActivity extends Activity {
             public void run() {
                 Booster.killBackground(MainActivity.this);
                 if (prefs.getBoolean("game_perf", false) && Pro.ready() && Pro.safePkg(pkg)) {
+                    List<String> skip = Pro.protectedPackages(MainActivity.this);
+                    for (String o : Pro.userPackages()) {
+                        if (!o.equals(pkg) && !skip.contains(o) && Pro.safePkg(o)) Pro.sh("am force-stop " + o);
+                    }
                     if (Build.VERSION.SDK_INT >= 31) Pro.sh("cmd game mode performance " + pkg);
                     Pro.sh("am set-standby-bucket " + pkg + " active");
                 }
@@ -999,7 +1003,367 @@ public class MainActivity extends Activity {
                 });
             }
         });
+
+        list.addView(ui.label("// APPS"), ui.lp(Ui.MATCH, Ui.WRAP, 16));
+        proButton(list, "CONGELAR APPS (COMO HAIL)", new Runnable() {
+            public void run() { openFreeze(); }
+        });
+        list.addView(ui.label("// MEMORIA"), ui.lp(Ui.MATCH, Ui.WRAP, 16));
+        proButton(list, "QUIÉN GASTA MÁS MEMORIA", new Runnable() {
+            public void run() { openMemory(); }
+        });
+        list.addView(ui.label("// ALMACENAMIENTO"), ui.lp(Ui.MATCH, Ui.WRAP, 16));
+        proButton(list, "RESTOS DE APPS YA BORRADAS", new Runnable() {
+            public void run() { findOrphans(); }
+        });
+        proButton(list, "ESTADO DE LA BATERÍA", new Runnable() {
+            public void run() { showBattery(); }
+        });
         setContentView(root);
+    }
+
+
+    // ---------- Congelar apps (Hail, FreezeYou) ----------
+
+    private void openFreeze() {
+        if (busy) return;
+        busy = true;
+        final AlertDialog d = new AlertDialog.Builder(this).setTitle("Leyendo apps…")
+                .setMessage("Un momento…").setCancelable(false).create();
+        d.show();
+        new Thread(new Runnable() {
+            public void run() {
+                final PackageManager pm = getPackageManager();
+                final List<String> skip = Pro.protectedPackages(MainActivity.this);
+                final List<String> frozen = new ArrayList<String>();
+                for (String p : Pro.disabledPackages()) {
+                    if (!skip.contains(p) && Pro.safePkg(p)) frozen.add(p);
+                }
+                final List<String> candidates = new ArrayList<String>();
+                for (String p : Pro.userPackages()) {
+                    if (!skip.contains(p) && Pro.safePkg(p) && !frozen.contains(p)) candidates.add(p);
+                }
+                Intent main = new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER);
+                for (android.content.pm.ResolveInfo ri : pm.queryIntentActivities(main, 0)) {
+                    String p = ri.activityInfo.packageName;
+                    boolean system = (ri.activityInfo.applicationInfo.flags & android.content.pm.ApplicationInfo.FLAG_SYSTEM) != 0;
+                    if (system && !Pro.critical(p) && !skip.contains(p) && Pro.safePkg(p)
+                            && !frozen.contains(p) && !candidates.contains(p)) candidates.add(p);
+                }
+                final Map<String, String> names = new HashMap<String, String>();
+                for (String p : frozen) names.put(p, labelOf(pm, p));
+                for (String p : candidates) names.put(p, labelOf(pm, p));
+                Collections.sort(candidates, new Comparator<String>() {
+                    public int compare(String a, String b) {
+                        return names.get(a).compareToIgnoreCase(names.get(b));
+                    }
+                });
+                runOnUiThread(new Runnable() {
+                    public void run() {
+                        busy = false;
+                        d.dismiss();
+                        showFreeze(frozen, candidates, names);
+                    }
+                });
+            }
+        }).start();
+    }
+
+    private String labelOf(PackageManager pm, String pkg) {
+        try {
+            return pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)).toString();
+        } catch (Exception e) {
+            return pkg;
+        }
+    }
+
+    private void showFreeze(final List<String> frozen, final List<String> candidates, final Map<String, String> names) {
+        screen = "freeze";
+        LinearLayout root = shell("CONGELAR APPS");
+        ScrollView sv = new ScrollView(this);
+        LinearLayout list = new LinearLayout(this);
+        list.setOrientation(LinearLayout.VERTICAL);
+        sv.addView(list);
+        root.addView(sv, new LinearLayout.LayoutParams(Ui.MATCH, 0, 1f));
+
+        TextView h = ui.body("Una app congelada no corre, no gasta batería ni recibe avisos, pero sigue instalada con sus datos. "
+                + "Se descongela con un toque. Las apps vitales del sistema no aparecen aquí.", 12, Ui.MUTED);
+        h.setPadding(0, ui.dp(10), 0, ui.dp(6));
+        list.addView(h);
+
+        if (!frozen.isEmpty()) {
+            list.addView(ui.label("// CONGELADAS (" + frozen.size() + ")"), ui.lp(Ui.MATCH, Ui.WRAP, 10));
+            for (final String p : frozen) {
+                Button b = ui.button("↺  DESCONGELAR  " + names.get(p), false, 48);
+                b.setOnClickListener(new View.OnClickListener() {
+                    public void onClick(View v) {
+                        runPro("Descongelando…", new ProWork() {
+                            public String run() {
+                                Pro.sh("pm enable " + p);
+                                return names.get(p) + " está activa otra vez.";
+                            }
+                        });
+                    }
+                });
+                list.addView(b, ui.lp(Ui.MATCH, Ui.WRAP, 6));
+            }
+            Button all = ui.button("DESCONGELAR TODAS", false, 48);
+            all.setOnClickListener(new View.OnClickListener() {
+                public void onClick(View v) {
+                    runPro("Descongelando…", new ProWork() {
+                        public String run() {
+                            for (String p : frozen) Pro.sh("pm enable " + p);
+                            return frozen.size() + " apps activas otra vez.";
+                        }
+                    });
+                }
+            });
+            list.addView(all, ui.lp(Ui.MATCH, Ui.WRAP, 10));
+        }
+
+        list.addView(ui.label("// ELIGE LAS QUE QUIERES CONGELAR"), ui.lp(Ui.MATCH, Ui.WRAP, 16));
+        final List<CheckBox> boxes = new ArrayList<CheckBox>();
+        final List<String> pkgs = new ArrayList<String>();
+        int shown = 0;
+        for (String p : candidates) {
+            if (shown++ >= MAX_ROWS) break;
+            CheckBox cb = new CheckBox(this);
+            cb.setText(names.get(p));
+            cb.setTextColor(Ui.TEXT);
+            cb.setTextSize(14);
+            cb.setButtonTintList(ColorStateList.valueOf(Ui.BLUE_LIGHT));
+            cb.setPadding(ui.dp(4), ui.dp(10), 0, ui.dp(10));
+            list.addView(cb, new LinearLayout.LayoutParams(Ui.MATCH, Ui.WRAP));
+            boxes.add(cb);
+            pkgs.add(p);
+        }
+        Button go = ui.button("CONGELAR SELECCIONADAS", true, 56);
+        go.setOnClickListener(new View.OnClickListener() {
+            public void onClick(View v) {
+                final List<String> sel = new ArrayList<String>();
+                for (int i = 0; i < boxes.size(); i++) {
+                    if (boxes.get(i).isChecked()) sel.add(pkgs.get(i));
+                }
+                if (sel.isEmpty()) {
+                    toast("No elegiste ninguna app");
+                    return;
+                }
+                runPro("Congelando…", new ProWork() {
+                    public String run() {
+                        for (String p : sel) {
+                            Pro.sh("am force-stop " + p + "; pm disable-user --user 0 " + p);
+                        }
+                        return sel.size() + " apps congeladas. Para usarlas, descongélalas aquí.";
+                    }
+                });
+            }
+        });
+        root.addView(go, ui.lp(Ui.MATCH, Ui.WRAP, 8));
+        setContentView(root);
+    }
+
+    // ---------- Memoria por app (memhogs, ProcessLens) ----------
+
+    private void openMemory() {
+        if (busy) return;
+        busy = true;
+        final AlertDialog d = new AlertDialog.Builder(this).setTitle("Midiendo memoria…")
+                .setMessage("Un momento…").setCancelable(false).create();
+        d.show();
+        new Thread(new Runnable() {
+            public void run() {
+                String out = Pro.sh("dumpsys meminfo", 60000);
+                List<String> user = Pro.userPackages();
+                List<String> skip = Pro.protectedPackages(MainActivity.this);
+                final List<String[]> rows = new ArrayList<String[]>();
+                java.util.regex.Matcher m = java.util.regex.Pattern
+                        .compile("^\\s*([\\d.,]+)K: (\\S+) \\(pid").matcher("");
+                java.util.Set<String> seen = new java.util.HashSet<String>();
+                for (String line : out.split("\n")) {
+                    if (line.contains("Total RSS") || line.contains("Total PSS by OOM")) break;
+                    m.reset(line);
+                    if (!m.find()) continue;
+                    String proc = m.group(2);
+                    String pkg = proc.contains(":") ? proc.substring(0, proc.indexOf(':')) : proc;
+                    if (!user.contains(pkg) || skip.contains(pkg) || !seen.add(pkg)) continue;
+                    long kb;
+                    try {
+                        kb = Long.parseLong(m.group(1).replace(",", "").replace(".", ""));
+                    } catch (NumberFormatException e) {
+                        continue;
+                    }
+                    rows.add(new String[]{pkg, String.valueOf(kb * 1024)});
+                    if (rows.size() >= 15) break;
+                }
+                final PackageManager pm = getPackageManager();
+                final List<String> labels = new ArrayList<String>();
+                for (String[] r : rows) labels.add(labelOf(pm, r[0]));
+                runOnUiThread(new Runnable() {
+                    public void run() {
+                        busy = false;
+                        d.dismiss();
+                        showMemory(rows, labels);
+                    }
+                });
+            }
+        }).start();
+    }
+
+    private void showMemory(final List<String[]> rows, List<String> labels) {
+        screen = "memory";
+        LinearLayout root = shell("MEMORIA POR APP");
+        ScrollView sv = new ScrollView(this);
+        LinearLayout list = new LinearLayout(this);
+        list.setOrientation(LinearLayout.VERTICAL);
+        sv.addView(list);
+        root.addView(sv, new LinearLayout.LayoutParams(Ui.MATCH, 0, 1f));
+        TextView h = ui.body(rows.isEmpty()
+                ? "No hay apps tuyas usando memoria ahora mismo."
+                : "Tus apps que más RAM usan ahora. Toca una para cerrarla.", 12, Ui.MUTED);
+        h.setPadding(0, ui.dp(10), 0, ui.dp(6));
+        list.addView(h);
+        for (int i = 0; i < rows.size(); i++) {
+            final String pkg = rows.get(i)[0];
+            final String label = labels.get(i);
+            long bytes = Long.parseLong(rows.get(i)[1]);
+            Button b = ui.button(fmt(bytes) + "   " + label + "   ✕ CERRAR", false, 50);
+            b.setOnClickListener(new View.OnClickListener() {
+                public void onClick(View v) {
+                    runPro("Cerrando…", new ProWork() {
+                        public String run() {
+                            Pro.sh("am force-stop " + pkg);
+                            return label + " cerrada.";
+                        }
+                    });
+                }
+            });
+            list.addView(b, ui.lp(Ui.MATCH, Ui.WRAP, 8));
+        }
+        setContentView(root);
+    }
+
+    // ---------- Restos de apps borradas (SD Maid CorpseFinder) ----------
+
+    private void findOrphans() {
+        if (busy) return;
+        busy = true;
+        final AlertDialog d = new AlertDialog.Builder(this).setTitle("Buscando restos…")
+                .setMessage("Un momento…").setCancelable(false).create();
+        d.show();
+        new Thread(new Runnable() {
+            public void run() {
+                java.util.Set<String> installed = Pro.installedPackages();
+                String out = Pro.sh("for b in data obb media; do for d in /sdcard/Android/$b/*; do "
+                        + "[ -d \"$d\" ] && echo \"$b/$(basename \"$d\") $(du -sk \"$d\" 2>/dev/null | cut -f1)\"; "
+                        + "done; done", 100000);
+                final List<String> paths = new ArrayList<String>();
+                long total = 0;
+                StringBuilder sb = new StringBuilder();
+                for (String line : out.split("\n")) {
+                    String[] parts = line.trim().split(" ");
+                    if (parts.length < 2) continue;
+                    String rel = parts[0];
+                    int slash = rel.indexOf('/');
+                    if (slash < 0) continue;
+                    String name = rel.substring(slash + 1);
+                    if (!name.matches("[A-Za-z0-9_]+(\\.[A-Za-z0-9_]+)+") || installed.contains(name)) continue;
+                    long kb;
+                    try {
+                        kb = Long.parseLong(parts[parts.length - 1]);
+                    } catch (NumberFormatException e) {
+                        continue;
+                    }
+                    paths.add(rel);
+                    total += kb * 1024;
+                    if (paths.size() <= 25) sb.append(name).append("  ·  ").append(fmt(kb * 1024)).append('\n');
+                }
+                final String listText = sb.toString();
+                final long totalFinal = total;
+                runOnUiThread(new Runnable() {
+                    public void run() {
+                        busy = false;
+                        d.dismiss();
+                        if (paths.isEmpty()) {
+                            new AlertDialog.Builder(MainActivity.this).setTitle("TODO LIMPIO")
+                                    .setMessage("No quedan carpetas de apps que ya no tienes.")
+                                    .setPositiveButton("OK", null).show();
+                            return;
+                        }
+                        new AlertDialog.Builder(MainActivity.this)
+                                .setTitle(paths.size() + " carpetas · " + fmt(totalFinal))
+                                .setMessage("Son datos de apps que ya no están instaladas:\n\n" + listText
+                                        + (paths.size() > 25 ? "…y " + (paths.size() - 25) + " más\n" : "")
+                                        + "\nSe borrarán para siempre.")
+                                .setPositiveButton("BORRAR TODO", new android.content.DialogInterface.OnClickListener() {
+                                    public void onClick(android.content.DialogInterface dd, int w) {
+                                        runPro("Borrando…", new ProWork() {
+                                            public String run() {
+                                                long before = Booster.freeStorage();
+                                                for (String rel : paths) {
+                                                    Pro.sh("rm -rf \"/sdcard/Android/" + rel + "\"");
+                                                }
+                                                sleep(500);
+                                                long gained = Booster.freeStorage() - before;
+                                                return paths.size() + " carpetas borradas"
+                                                        + (gained > 0 ? "  ·  +" + fmt(gained) : "") + ".";
+                                            }
+                                        });
+                                    }
+                                })
+                                .setNegativeButton("CANCELAR", null)
+                                .show();
+                    }
+                });
+            }
+        }).start();
+    }
+
+    // ---------- Batería (BatStats, Battery Monitor) ----------
+
+    private void showBattery() {
+        runPro("Leyendo batería…", new ProWork() {
+            public String run() {
+                String out = Pro.sh("dumpsys battery", 4000);
+                String level = grab(out, "level"), temp = grab(out, "temperature");
+                String volt = grab(out, "voltage"), health = grab(out, "health"), status = grab(out, "status");
+                StringBuilder sb = new StringBuilder();
+                sb.append("Nivel: ").append(level).append("%\n");
+                try {
+                    sb.append("Temperatura: ").append(Integer.parseInt(temp) / 10f).append(" °C\n");
+                } catch (NumberFormatException e) {
+                    sb.append("Temperatura: ").append(temp).append('\n');
+                }
+                sb.append("Voltaje: ").append(volt).append(" mV\n");
+                sb.append("Salud: ").append(healthName(health)).append('\n');
+                sb.append("Estado: ").append(statusName(status));
+                return sb.toString();
+            }
+        });
+    }
+
+    private static String grab(String dump, String key) {
+        for (String line : dump.split("\n")) {
+            line = line.trim();
+            if (line.startsWith(key + ":")) return line.substring(key.length() + 1).trim();
+        }
+        return "?";
+    }
+
+    private static String healthName(String v) {
+        if ("2".equals(v)) return "buena";
+        if ("3".equals(v)) return "sobrecalentada";
+        if ("4".equals(v)) return "muerta";
+        if ("5".equals(v)) return "sobrevoltaje";
+        if ("7".equals(v)) return "fría";
+        return v;
+    }
+
+    private static String statusName(String v) {
+        if ("2".equals(v)) return "cargando";
+        if ("3".equals(v)) return "descargando";
+        if ("4".equals(v)) return "sin cargar";
+        if ("5".equals(v)) return "llena";
+        return v;
     }
 
     private void proButton(LinearLayout list, String label, final Runnable r) {
